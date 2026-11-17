@@ -10,8 +10,15 @@ Records
     for example ("2026-11-03", "foodpanda biryani", 850.0, "PKR", "Food", "expense").
     A tuple is used because a saved record should not be changed by mistake.
 
-Agreed interface (filled in by Part 4). n = number of rows in the file.
+n = number of rows in the file.
 """
+
+import csv
+import json
+import os
+from datetime import datetime
+
+LEDGER_HEADER = ["date", "description", "amount", "currency", "category", "kind"]
 
 
 class InvalidTransactionError(Exception):
@@ -29,7 +36,19 @@ def parse_amount(text):
     Raises: InvalidTransactionError if it is empty, not a number, or not positive
     Time:   O(L) where L is the length of the text
     """
-    raise NotImplementedError("Part 4")
+    cleaned = str(text).strip().replace(",", "")
+    if cleaned == "":
+        raise InvalidTransactionError("Amount is empty.")
+    try:
+        amount = float(cleaned)
+    except ValueError:
+        raise InvalidTransactionError("Amount is not a number: " + str(text))
+    # float() accepts "nan" and "inf", which are not real amounts.
+    if amount != amount or amount in (float("inf"), float("-inf")):
+        raise InvalidTransactionError("Amount is not a real number: " + str(text))
+    if amount <= 0:
+        raise InvalidTransactionError("Amount must be more than 0.")
+    return amount
 
 
 def parse_date(text):
@@ -40,7 +59,13 @@ def parse_date(text):
     Raises: InvalidTransactionError if the format or the date is wrong
     Time:   O(1)
     """
-    raise NotImplementedError("Part 4")
+    cleaned = str(text).strip()
+    try:
+        # strptime also rejects dates that do not exist, such as 2026-02-30.
+        date = datetime.strptime(cleaned, "%Y-%m-%d")
+    except ValueError:
+        raise InvalidTransactionError("Date must look like 2026-11-03, got: " + cleaned)
+    return date.strftime("%Y-%m-%d")
 
 
 def read_ledger_csv(path):
@@ -52,7 +77,26 @@ def read_ledger_csv(path):
     Raises: FileNotFoundError if the file does not exist
     Time:   O(n)
     """
-    raise NotImplementedError("Part 4")
+    records = []
+    skipped = 0
+    with open(path, "r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            try:
+                date = parse_date(row["date"])
+                amount = parse_amount(row["amount"])
+                category = row["category"].strip()
+                if category == "":
+                    raise InvalidTransactionError("Category is empty.")
+            except (InvalidTransactionError, KeyError, AttributeError):
+                # KeyError: a column is missing. AttributeError: a short row gives None.
+                skipped += 1
+                continue
+            description = (row.get("description") or "").strip()
+            currency = (row.get("currency") or "PKR").strip().upper()
+            kind = (row.get("kind") or "expense").strip().lower()
+            records.append((date, description, amount, currency, category, kind))
+    return records, skipped
 
 
 def write_ledger_csv(path, records):
@@ -62,18 +106,33 @@ def write_ledger_csv(path, records):
     Output: None
     Time:   O(n)
     """
-    raise NotImplementedError("Part 4")
+    _make_folder_for(path)
+    with open(path, "w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(LEDGER_HEADER)
+        writer.writerows(records)
 
 
 def load_labelled_dataset(path):
     """Read the labelled training data (description,category).
 
+    Rows with an empty description or category are skipped.
     Input:  path (str)
     Output: (texts, labels), two lists of the same length
     Raises: FileNotFoundError if the file does not exist
     Time:   O(n)
     """
-    raise NotImplementedError("Part 4")
+    texts = []
+    labels = []
+    with open(path, "r", newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            text = (row.get("description") or "").strip()
+            label = (row.get("category") or "").strip()
+            if text and label:
+                texts.append(text)
+                labels.append(label)
+    return texts, labels
 
 
 def read_json(path, default=None):
@@ -83,7 +142,13 @@ def read_json(path, default=None):
     Output: the dict or list stored in the file, or default
     Time:   O(size of file)
     """
-    raise NotImplementedError("Part 4")
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return default
+    except json.JSONDecodeError:
+        return default
 
 
 def write_json(path, data):
@@ -93,7 +158,9 @@ def write_json(path, data):
     Output: None
     Time:   O(size of data)
     """
-    raise NotImplementedError("Part 4")
+    _make_folder_for(path)
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2)
 
 
 def append_text_lines(path, lines):
@@ -103,4 +170,14 @@ def append_text_lines(path, lines):
     Output: None
     Time:   O(number of lines)
     """
-    raise NotImplementedError("Part 4")
+    _make_folder_for(path)
+    with open(path, "a", encoding="utf-8") as file:
+        for line in lines:
+            file.write(line + "\n")
+
+
+def _make_folder_for(path):
+    """Create the folder that will hold path, if it does not exist yet."""
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)

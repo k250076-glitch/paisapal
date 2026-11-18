@@ -128,3 +128,25 @@ def log_cleaning(originals, cleaned, path):
     """
     lines = [original + " -> " + result for original, result in zip(originals, cleaned)]
     append_text_lines(path, lines)
+
+
+if __name__ == "__main__":
+    # Demo: run this file on its own to see the cleaning on real notes.
+    import os
+    from data_io import load_labelled_dataset
+
+    project_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    dataset_path = os.path.join(project_folder, "data", "raw", "expenses_labelled.csv")
+
+    print("Demo of text_utils.py: messy note -> cleaned note")
+    print()
+    texts, labels = load_labelled_dataset(dataset_path)
+    for text, label in zip(texts[:10], labels[:10]):
+        print(" ", text.ljust(40), "->", clean_text(text).ljust(28), "(" + label + ")")
+    print()
+
+    examples = ["Rs 850 FOODPANDA biryani!!", "food panda biriyani via jazzcash",
+                "fp deal", "K Electric bill paid", ""]
+    print("Hand-picked examples, including an empty note")
+    for text in examples:
+        print(" ", repr(text).ljust(40), "->", repr(clean_text(text)))

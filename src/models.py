@@ -12,8 +12,9 @@ Polymorphism: ExpenseTransaction and IncomeTransaction both have
 signed_amount() and describe(), but each gives its own answer. Code that loops
 over a mixed list just calls t.signed_amount() and gets the right sign.
 
-Budget and Ledger are filled in by Part 5. n = number of transactions,
-k = number of categories.
+n = number of transactions, k = number of categories.
+
+Run this file on its own (python src/models.py) to see a demo.
 """
 
 from abc import ABC, abstractmethod
@@ -130,7 +131,7 @@ class Budget:
 
     def __init__(self):
         """Start with no limits. Time: O(1)"""
-        raise NotImplementedError("Part 5")
+        self.__limits = {}
 
     def set_limit(self, category, limit):
         """Set the monthly limit for a category.
@@ -138,11 +139,13 @@ class Budget:
         Raises InvalidTransactionError for an unknown category or a limit <= 0.
         Time: O(1)
         """
-        raise NotImplementedError("Part 5")
+        if category not in CATEGORIES:
+            raise InvalidTransactionError("Unknown category: " + str(category))
+        self.__limits[category] = parse_amount(limit)
 
     def get_limit(self, category):
         """Return the limit for a category, or None if no limit is set. Time: O(1)"""
-        raise NotImplementedError("Part 5")
+        return self.__limits.get(category)
 
     def check(self, spent_by_category, warn_at=0.8):
         """Compare spending with the limits.
@@ -153,16 +156,35 @@ class Budget:
                 "OK", "NEAR" or "OVER"
         Time:   O(k)
         """
-        raise NotImplementedError("Part 5")
+        report = []
+        for category, limit in self.__limits.items():
+            spent = spent_by_category.get(category, 0)
+            if spent > limit:
+                status = "OVER"
+            elif spent >= warn_at * limit:
+                status = "NEAR"
+            else:
+                status = "OK"
+            report.append((category, spent, limit, status))
+        return report
 
     def to_dict(self):
         """Return a copy of the limits dict, used to save to JSON. Time: O(k)"""
-        raise NotImplementedError("Part 5")
+        return dict(self.__limits)
 
     @classmethod
     def from_dict(cls, data):
-        """Build a Budget from a dict loaded from JSON. Time: O(k)"""
-        raise NotImplementedError("Part 5")
+        """Build a Budget from a dict loaded from JSON. Time: O(k)
+
+        Entries with an unknown category or a bad limit are skipped.
+        """
+        budget = cls()
+        for category, limit in data.items():
+            try:
+                budget.set_limit(category, limit)
+            except InvalidTransactionError:
+                continue
+        return budget
 
 
 class Ledger:
@@ -170,39 +192,120 @@ class Ledger:
 
     def __init__(self):
         """Start with an empty list. Time: O(1)"""
-        raise NotImplementedError("Part 5")
+        self.__transactions = []
 
     def add(self, transaction):
         """Add a transaction to the end of the list. Time: O(1) on average"""
-        raise NotImplementedError("Part 5")
+        if not isinstance(transaction, Transaction):
+            raise InvalidTransactionError("Only Transaction objects can be added.")
+        self.__transactions.append(transaction)
 
     def __len__(self):
         """Return how many transactions there are. Time: O(1)"""
-        raise NotImplementedError("Part 5")
+        return len(self.__transactions)
 
     def all(self):
         """Return the list of all transactions. Time: O(1)"""
-        raise NotImplementedError("Part 5")
+        return self.__transactions
 
     def for_month(self, month):
         """Return transactions whose date starts with month ("YYYY-MM"). Time: O(n)"""
-        raise NotImplementedError("Part 5")
+        return [t for t in self.__transactions if t.date.startswith(month)]
 
     def total_by_category(self, month=None):
         """Add up expenses per category, for one month or for all time.
 
         Output: dict {category: total}. Time: O(n)
         """
-        raise NotImplementedError("Part 5")
+        if month is None:
+            items = self.__transactions
+        else:
+            items = self.for_month(month)
+        totals = {}
+        for t in items:
+            if t.kind() == "expense":
+                totals[t.category] = totals.get(t.category, 0) + t.amount
+        return totals
 
     def balance(self):
         """Return total income minus total expenses, using signed_amount(). Time: O(n)"""
-        raise NotImplementedError("Part 5")
+        # Polymorphism: each object returns its own sign.
+        return sum(t.signed_amount() for t in self.__transactions)
 
     def largest_expenses(self, count=5):
         """Return the biggest expenses, sorted with a lambda key. Time: O(n log n)"""
-        raise NotImplementedError("Part 5")
+        expenses = [t for t in self.__transactions if t.kind() == "expense"]
+        expenses.sort(key=lambda t: t.amount, reverse=True)
+        return expenses[:count]
 
     def to_records(self):
         """Return every transaction as a record tuple, for saving. Time: O(n)"""
-        raise NotImplementedError("Part 5")
+        return [t.to_record() for t in self.__transactions]
+
+    @classmethod
+    def from_records(cls, records):
+        """Build a Ledger from record tuples read by data_io.
+
+        Records in a foreign currency or with an unknown category are skipped,
+        and the number skipped is returned too.
+        Output: (ledger, skipped). Time: O(n)
+        """
+        ledger = cls()
+        skipped = 0
+        for date, description, amount, currency, category, kind in records:
+            try:
+                if currency != "PKR":
+                    raise InvalidTransactionError("Convert to PKR first.")
+                if kind == "income":
+                    ledger.add(IncomeTransaction(date, description, amount))
+                else:
+                    ledger.add(ExpenseTransaction(date, description, amount, category))
+            except InvalidTransactionError:
+                skipped += 1
+        return ledger, skipped
+
+
+if __name__ == "__main__":
+    # Demo: run this file on its own to see the classes working.
+    import os
+    from data_io import read_ledger_csv
+
+    # Find the data file from this file's folder, so the demo works from anywhere.
+    project_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ledger_path = os.path.join(project_folder, "data", "raw", "ledger_sample.csv")
+
+    print("Demo of models.py")
+    print()
+    items = [ExpenseTransaction("2026-11-03", "foodpanda biryani", 850, "Food"),
+             IncomeTransaction("2026-11-01", "pocket money", 30000),
+             ExpenseTransaction("2026-11-04", "uber to uni", 450, "Transport")]
+    print("Polymorphism: one loop, each object gives its own sign")
+    for t in items:
+        print(" ", t.describe(), "->", t.signed_amount())
+    print()
+
+    print("Validation: a negative amount is rejected")
+    try:
+        ExpenseTransaction("2026-11-05", "test", -100, "Food")
+    except InvalidTransactionError as error:
+        print("  InvalidTransactionError:", error)
+    print()
+
+    records, bad_rows = read_ledger_csv(ledger_path)
+    ledger, skipped = Ledger.from_records(records)
+    print("Loaded", len(ledger), "transactions from the sample ledger")
+    print("Balance (income minus expenses): Rs", format(ledger.balance(), ",.0f"))
+    print()
+
+    budget = Budget()
+    budget.set_limit("Food", 12000)
+    budget.set_limit("Transport", 10000)
+    budget.set_limit("Shopping", 9000)
+    print("Budget check for 2026-10")
+    for category, spent, limit, status in budget.check(ledger.total_by_category("2026-10")):
+        print(" ", category.ljust(10), "spent", format(spent, ",.0f"), "of", format(limit, ",.0f"), "->", status)
+    print()
+
+    print("Three largest expenses")
+    for t in ledger.largest_expenses(3):
+        print(" ", t.describe())

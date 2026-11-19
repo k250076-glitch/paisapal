@@ -10,12 +10,22 @@ How it works
     3. Both are tested on the same unseen 20%, and the better one is used
        in the app.
 
-Parts 8 and 11 fill in the models and the error analysis. n = number of notes,
+Part 11 fills in the error analysis. Run this file on its own to see a demo.
+n = number of notes,
 v = number of different words (the vocabulary size), c = number of categories.
 """
 
+import csv
+import os
+
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
+from sklearn.naive_bayes import MultinomialNB
+
+from data_io import load_labelled_dataset
+from text_utils import clean_many, clean_text
 
 # The seed makes the random split the same every time, so results can be repeated.
 RANDOM_SEED = 42
@@ -38,6 +48,15 @@ def split_data(texts, labels, test_size=0.2, seed=RANDOM_SEED):
                             random_state=seed, stratify=labels)
 
 
+def make_vectorizer():
+    """Return a new, unfitted TF-IDF vectorizer with our settings."""
+    # ngram_range=(1, 2) also uses pairs of words, such as "uni fee",
+    # which carry more meaning than either word alone.
+    # sublinear_tf uses 1 + log(count) instead of the raw count, so a word
+    # repeated in one note does not get too much weight.
+    return TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True)
+
+
 def build_features(train_texts, test_texts):
     """Learn the TF-IDF vocabulary from the training notes only, then turn
     both parts into number tables (matrices).
@@ -46,11 +65,7 @@ def build_features(train_texts, test_texts):
     Output: (vectorizer, X_train, X_test)
     Time:   O(total number of words)
     """
-    # ngram_range=(1, 2) also uses pairs of words, such as "uni fee",
-    # which carry more meaning than either word alone.
-    # sublinear_tf uses 1 + log(count) instead of the raw count, so a word
-    # repeated in one note does not get too much weight.
-    vectorizer = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True)
+    vectorizer = make_vectorizer()
     # fit_transform learns the vocabulary and the idf values from the training
     # notes only. The test notes are only transformed, so no information from
     # the test set leaks into training.
@@ -62,9 +77,26 @@ def build_features(train_texts, test_texts):
 class ExpenseClassifier:
     """A TF-IDF vectorizer plus one model, "nb" (Naive Bayes) or "lr" (Logistic Regression)."""
 
+    MODEL_NAMES = {"nb": "Multinomial Naive Bayes", "lr": "Logistic Regression"}
+
     def __init__(self, model_name="nb"):
         """Create an untrained classifier. Time: O(1)"""
-        raise NotImplementedError("Part 8")
+        if model_name not in self.MODEL_NAMES:
+            raise ValueError("model_name must be 'nb' or 'lr'")
+        self.model_name = model_name
+        self.vectorizer = None
+        if model_name == "nb":
+            # alpha is the smoothing: every word gets a small extra count, so a
+            # word never seen with a category does not make its chance zero.
+            self.model = MultinomialNB(alpha=0.5)
+        else:
+            # liblinear is a solver that works well on small text datasets.
+            # It trains one yes/no model per category ("one vs rest").
+            self.model = LogisticRegression(solver="liblinear", max_iter=1000)
+
+    def full_name(self):
+        """Return the readable model name, for example "Logistic Regression"."""
+        return self.MODEL_NAMES[self.model_name]
 
     def train(self, texts, labels):
         """Clean the notes, build TF-IDF features and fit the model.
@@ -72,18 +104,43 @@ class ExpenseClassifier:
         Time: O(n * v) for Naive Bayes, more for Logistic Regression
         because it repeats over the data several times.
         """
-        raise NotImplementedError("Part 8")
+        cleaned = clean_many(texts)
+        self.vectorizer = make_vectorizer()
+        X_train = self.vectorizer.fit_transform(cleaned)
+        self.model.fit(X_train, labels)
 
     def predict(self, text):
         """Return the predicted category for one raw note. Time: O(L + v * c)"""
-        raise NotImplementedError("Part 8")
+        if self.vectorizer is None:
+            raise RuntimeError("Train the classifier before predicting.")
+        cleaned = clean_text(text)
+        if cleaned == "":
+            # Nothing useful is left after cleaning, so we cannot guess.
+            return "Other"
+        features = self.vectorizer.transform([cleaned])
+        return self.model.predict(features)[0]
+
+    def predict_many(self, texts):
+        """Return the predicted category for each raw note in a list."""
+        if self.vectorizer is None:
+            raise RuntimeError("Train the classifier before predicting.")
+        features = self.vectorizer.transform(clean_many(texts))
+        return list(self.model.predict(features))
 
     def evaluate(self, texts, labels):
         """Return a dict with accuracy, precision, recall and f1 on the given data.
 
+        Precision, recall and f1 are "macro" averages: worked out for each
+        category, then averaged, so every category counts the same.
         Time: O(n * v * c)
         """
-        raise NotImplementedError("Part 8")
+        predicted = self.predict_many(texts)
+        return {
+            "accuracy": accuracy_score(labels, predicted),
+            "precision": precision_score(labels, predicted, average="macro", zero_division=0),
+            "recall": recall_score(labels, predicted, average="macro", zero_division=0),
+            "f1": f1_score(labels, predicted, average="macro", zero_division=0),
+        }
 
 
 def compare_models(texts, labels):
@@ -94,7 +151,18 @@ def compare_models(texts, labels):
             {"nb": metrics dict, "lr": metrics dict} and best is the trained
             ExpenseClassifier with the higher F1 score
     """
-    raise NotImplementedError("Part 8")
+    # Split the raw notes once, so both models get exactly the same
+    # training and testing notes. That makes the comparison fair.
+    train_texts, test_texts, train_labels, test_labels = split_data(texts, labels)
+    results = {}
+    trained = {}
+    for name in ("nb", "lr"):
+        classifier = ExpenseClassifier(name)
+        classifier.train(train_texts, train_labels)
+        results[name] = classifier.evaluate(test_texts, test_labels)
+        trained[name] = classifier
+    best_name = max(results, key=lambda name: results[name]["f1"])
+    return results, trained[best_name]
 
 
 def save_correction(text, category, path):
@@ -104,7 +172,25 @@ def save_correction(text, category, path):
     Output: None
     Time:   O(1)
     """
-    raise NotImplementedError("Part 8")
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    new_file = not os.path.exists(path)
+    with open(path, "a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        if new_file:
+            writer.writerow(["description", "category"])
+        writer.writerow([text, category])
+
+
+def load_training_data(dataset_path, corrections_path):
+    """Return (texts, labels) from the dataset plus any saved corrections."""
+    texts, labels = load_labelled_dataset(dataset_path)
+    if os.path.exists(corrections_path):
+        more_texts, more_labels = load_labelled_dataset(corrections_path)
+        texts = texts + more_texts
+        labels = labels + more_labels
+    return texts, labels
 
 
 def error_analysis(classifier, texts, labels, path):
@@ -117,31 +203,44 @@ def error_analysis(classifier, texts, labels, path):
 
 
 if __name__ == "__main__":
-    # Demo: run this file on its own to see the split and the TF-IDF features.
-    import os
-    from data_io import load_labelled_dataset
-    from text_utils import clean_many
-
+    # Demo: run this file on its own to train both models and compare them.
     project_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     dataset_path = os.path.join(project_folder, "data", "raw", "expenses_labelled.csv")
+    corrections_path = os.path.join(project_folder, "data", "processed", "corrections.csv")
+    hard_path = os.path.join(project_folder, "data", "raw", "expenses_hard_test.csv")
 
-    print("Demo of classifier.py: split and TF-IDF")
+    print("Demo of classifier.py: train and compare two models")
     print()
-    texts, labels = load_labelled_dataset(dataset_path)
-    cleaned = clean_many(texts)
-    train_texts, test_texts, train_labels, test_labels = split_data(cleaned, labels)
-    print("Notes in the dataset:", len(texts))
-    print("Training notes:", len(train_texts), " Testing notes:", len(test_texts))
-    print()
-
+    texts, labels = load_training_data(dataset_path, corrections_path)
+    train_texts, test_texts, train_labels, test_labels = split_data(clean_many(texts), labels)
     vectorizer, X_train, X_test = build_features(train_texts, test_texts)
-    print("Vocabulary size (different words and word pairs):", len(vectorizer.vocabulary_))
-    print("Training matrix shape:", X_train.shape, "(notes x features)")
+    print("Notes:", len(texts), " Training:", len(train_texts), " Testing:", len(test_texts))
+    print("TF-IDF features (words and word pairs):", len(vectorizer.vocabulary_))
     print()
 
-    example = "foodpanda biryani"
-    row = vectorizer.transform([example])
-    names = vectorizer.get_feature_names_out()
-    print("TF-IDF scores for the note:", example)
-    for index in row.nonzero()[1]:
-        print(" ", names[index].ljust(20), round(row[0, index], 3))
+    results, best = compare_models(texts, labels)
+    print("Results on the 20% test notes (never seen in training)")
+    print("Model".ljust(26) + "Accuracy  Precision  Recall    F1")
+    for name, metrics in results.items():
+        print(ExpenseClassifier.MODEL_NAMES[name].ljust(26)
+              + format(metrics["accuracy"], ".3f").ljust(10)
+              + format(metrics["precision"], ".3f").ljust(11)
+              + format(metrics["recall"], ".3f").ljust(10)
+              + format(metrics["f1"], ".3f"))
+    print()
+    print("Best model (higher F1):", best.full_name())
+    print()
+
+    # The 20% test notes come from the same templates as the training notes,
+    # so the score above is very high. This second test uses 80 notes we wrote
+    # by hand with new shops and new wording, to show the real limits.
+    hard_texts, hard_labels = load_labelled_dataset(hard_path)
+    hard = best.evaluate(hard_texts, hard_labels)
+    print("Same model on", len(hard_texts), "hand-written notes with new wording:")
+    print("  accuracy", format(hard["accuracy"], ".3f"), " f1", format(hard["f1"], ".3f"))
+    print()
+
+    print("Predictions for new notes")
+    for note in ["Rs 850 foodpanda biryani", "careem to uni", "K Electric bill",
+                 "panadol from dvago", "cinepax tickets", "semester fee"]:
+        print(" ", note.ljust(28), "->", best.predict(note))

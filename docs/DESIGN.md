@@ -3,7 +3,7 @@
 This document grows with the project. Each part adds the section for the
 code it builds, so it always matches what is in the repository.
 
-Status: up to date with Parts 1 to 4.
+Status: up to date with Parts 1 to 10.
 
 ## 1. What the program does
 
@@ -54,7 +54,14 @@ the monthly budget, can convert foreign currency to PKR, and draws charts.
 A record is passed around as a tuple:
 `(date, description, amount, currency, category, kind)`.
 
-## 5. Why we agreed the interfaces first
+## 5. Running each part on its own
+
+Every module ends with an `if __name__ == "__main__":` block. Open the file in
+VS Code and press Run (or `python src/models.py` and so on), and it prints a
+short demo of that module. This block only runs when the file itself is run;
+when another module imports the file, it is skipped.
+
+## 5b. Why we agreed the interfaces first
 
 Part 1 created every module with the function names, inputs, outputs and time
 complexity written in the docstrings, but without the code. That way each
@@ -138,6 +145,157 @@ in one place.
   `json.JSONDecodeError`, `InvalidTransactionError`, `KeyError`), never a bare
   `except`, so real bugs are not hidden.
 
+### 6.4 Ledger and Budget (Part 5, models.py)
+
+`Ledger` keeps every transaction in a **list**, in the order they were added.
+A list fits because expenses arrive one after another, `append()` adds to the
+end in O(1) time on average, and most questions ("total spent on Food in
+October") need to look at every transaction anyway, which is O(n).
+
+- `for_month("2026-10")` keeps the transactions whose date starts with that
+  month, using a list comprehension.
+- `total_by_category()` walks the list once and adds each expense to a dict
+  `{category: total}`.
+- `balance()` is the sum of `signed_amount()` over the list. This is where
+  polymorphism pays off: no if statement is needed for income vs expense.
+- `largest_expenses()` sorts with `key=lambda t: t.amount`, O(n log n).
+- `from_records()` turns the tuples from `data_io` into objects. Rows in a
+  foreign currency are skipped until Part 10 converts them, and rows that fail
+  validation are skipped and counted.
+
+`Budget` keeps the limits in a **dict** `{category: limit}`. Looking up the
+limit of one category is O(1), because a dict uses hashing to jump straight to
+the key. `check()` compares each limit with the amount spent and returns
+"OK", "NEAR" (80% or more of the limit) or "OVER". The dict is private
+(`self.__limits`), so limits can only be set through `set_limit()`, which
+checks the category and the amount.
+
+### 6.5 Train/test split and TF-IDF (Part 6, classifier.py)
+
+`split_data()` keeps 80% of the notes for training and 20% for testing. The
+split is random but uses a fixed seed (42), so every run and every member gets
+the same split. `stratify=labels` keeps the same share of each category in
+both parts, so a small category like Other is not missing from the test set.
+
+TF-IDF turns each cleaned note into a row of numbers, one column per word or
+word pair in the vocabulary:
+
+- **TF (term frequency):** how often the word appears in this note. We use
+  `1 + log(count)` (`sublinear_tf=True`) so a repeated word does not dominate.
+- **IDF (inverse document frequency):** `log(n / number of notes containing
+  the word)` (smoothed). A word that appears in almost every note gets a low
+  IDF; a rare, specific word like "foodpanda" gets a high one.
+- **TF-IDF = TF x IDF**, and each row is scaled to length 1.
+
+We also use word pairs (`ngram_range=(1, 2)`), so "uni fee" is a feature as
+well as "uni" and "fee". The vectorizer learns its vocabulary from the
+training notes only (`fit_transform`); the test notes are only transformed.
+If it learned from the test notes too, information about the test set would
+leak into training and the accuracy would look better than it really is.
+
+The result is a **sparse matrix**: about 1,300 columns, but each note uses
+only 2 to 5 of them, so only the non-zero values are stored.
+
+### 6.6 Monthly spending matrix (Part 7, analysis.py)
+
+`build_month_matrix()` builds a **2-D NumPy array** with one row per month and
+one column per category (6 x 8 for the sample ledger). Two dicts give the row
+number of a month and the column number of a category in O(1), so each
+record is added to its cell without searching.
+
+Once the grid exists, NumPy does the rest without Python loops (vectorised):
+
+- `matrix.sum(axis=0)`: total per category (down the columns).
+- `matrix.sum(axis=1)`: total per month (across the rows).
+- `matrix.mean(axis=0)`: average month for each category.
+- `over_budget_mask()`: `matrix > budget_vector`. The budget has shape (8,) and
+  the matrix (6, 8); **broadcasting** repeats the budget for every month and
+  compares cell by cell, giving a True/False grid. A budget of 0 means no
+  limit and is never marked.
+
+Why NumPy instead of nested lists: the whole grid is stored as one block of
+numbers, and operations like sum and comparison run in fast compiled code
+instead of a Python loop per cell.
+
+### 6.7 Two classifiers and how we compare them (Part 8, classifier.py)
+
+`ExpenseClassifier` holds one TF-IDF vectorizer and one model. The model is
+chosen by name: `"nb"` is Multinomial Naive Bayes (alpha=0.5 smoothing) and
+`"lr"` is Logistic Regression (liblinear solver, one vs rest).
+
+- `train()` cleans the notes, fits the vectorizer and fits the model.
+- `predict()` cleans one note and returns a category. If nothing is left after
+  cleaning it returns "Other". Predicting before training raises RuntimeError.
+- `evaluate()` returns accuracy plus macro precision, recall and F1. Macro
+  means the score is worked out per category and then averaged, so a small
+  category counts as much as a big one.
+- `compare_models()` splits the notes once, trains both models on the same
+  80% and tests both on the same 20%, then keeps the one with the higher F1.
+  A dict `{"nb": metrics, "lr": metrics}` holds the results.
+- `save_correction()` appends (note, right category) to
+  data/processed/corrections.csv. `load_training_data()` adds those rows to
+  the dataset, so the next training learns from the user's corrections.
+
+Results with seed 42:
+
+| Model | Accuracy | Macro F1 |
+|---|---|---|
+| Multinomial Naive Bayes | 0.997 | about 0.997 |
+| Logistic Regression | 0.994 | about 0.994 |
+
+Honest limit: the 1,640 training notes come from templates, so the 20% test
+notes look very like the training notes and the score is almost perfect. We
+also wrote 80 notes by hand with new shops and new wording
+(data/raw/expenses_hard_test.csv). On those the best model gets about 0.51
+accuracy and 0.51 F1. This shows the model learns the words it has seen, not
+the meaning, and that more varied real data is the main way to improve it.
+
+### 6.8 Pandas summary and lambda helpers (Part 9, analysis.py)
+
+- `to_dataframe()` turns record tuples into a DataFrame with named columns.
+- `clean_dataframe()` uses `pd.to_numeric(..., errors="coerce")` and
+  `pd.to_datetime(..., errors="coerce")` so a bad amount or date becomes
+  missing (NaN or NaT) instead of crashing. Those rows are dropped, amounts of
+  0 or less are dropped, an empty category becomes "Other" and a "month"
+  column is added. On the raw sample CSV: 274 rows with 3 missing values
+  become 271 clean rows.
+- `monthly_summary()` uses `groupby(["month", "category"])` and
+  `agg(["sum", "count", "mean"])` to give total, number of items and average
+  for every month and category.
+- `top_spending_days()` adds up spending per day in a dict, then sorts the
+  (date, total) pairs with `sorted(..., key=lambda pair: pair[1])`.
+- `large_expenses()` uses `filter` with a lambda; `amounts_in_thousands()`
+  uses `map` with a lambda.
+
+### 6.9 Currency conversion with a cache (Part 10, api_client.py)
+
+`convert_to_pkr(amount, currency)` turns a foreign amount into rupees.
+The rates come from a free website (open.er-api.com, no API key). We used it
+instead of Frankfurter, which was in the plan, because Frankfurter has no PKR
+rates. Rates are
+looked for in this order:
+
+1. "live": ask the website (5 second timeout) and save the answer to
+   data/processed/rates_cache.json with the date.
+2. "cache": if the website fails, use the last saved rates.
+3. "fallback": if there is no cache either, use rough built-in rates. The app
+   says so when it uses them.
+
+Data structures: `SUPPORTED_CURRENCIES` is a set, so "is AED supported?" is
+O(1). The rates are a dict {currency: rupees per 1 unit}.
+
+Errors: no internet, a status that is not 200, a reply that is not JSON or a
+reply without rates all become ConnectionError inside `fetch_rates()`, which
+`get_rates()` catches before trying the cache. An unsupported currency or a
+bad amount raises InvalidTransactionError. PKR is returned unchanged.
+
+Testing: the lab network cannot reach the website, so we tested with a fake
+(mocked) `requests.get` that returns a good reply, a 500 status, bad JSON, an
+error reply and no connection, and checked that the source changes from live
+to cache to fallback as expected. This is the part we planned to drop first
+if we fell behind; the rest of the app works without it because foreign rows
+are skipped.
+
 ## 7. Time and space complexity of the main operations
 
 Filled in as each part is built.
@@ -152,3 +310,22 @@ Filled in as each part is built.
 | `parse_amount()`, `parse_date()` | O(1) for short input | O(1) |
 | `read_ledger_csv()`, `write_ledger_csv()`, n rows | O(n) | O(n) |
 | `load_labelled_dataset()`, n rows | O(n) | O(n) |
+| `Ledger.add()` | O(1) average | O(1) |
+| `for_month()`, `total_by_category()`, `balance()` | O(n) | O(n) worst case for the result |
+| `largest_expenses()` | O(n log n) | O(n) |
+| `Budget.set_limit()`, `get_limit()` | O(1) average | O(k) for the dict |
+| `Budget.check()` | O(k) | O(k) |
+| `split_data()` | O(n) | O(n) |
+| `build_features()` (TF-IDF), W words in total | O(W) | O(non-zero values), sparse |
+| `build_month_matrix()`, m months, k categories | O(n + m*k) | O(m*k) |
+| `over_budget_mask()`, `matrix_summary()` | O(m*k) | O(m*k) |
+| `ExpenseClassifier.train()`, Naive Bayes | O(n * v) | O(v * c) |
+| `ExpenseClassifier.train()`, Logistic Regression | O(r * n * v), r = passes | O(v * c) |
+| `predict()` on one note of L characters | O(L + v * c) | O(L) |
+| `evaluate()`, `compare_models()` | O(n * v * c) plus training | O(n) |
+| `save_correction()` | O(1) | O(1) |
+| `clean_dataframe()`, `to_dataframe()` | O(n) | O(n) |
+| `monthly_summary()` (groupby) | O(n log n) | O(n) |
+| `top_spending_days()` | O(n + d log d), d days | O(d) |
+| `large_expenses()`, `amounts_in_thousands()` | O(n) | O(n) |
+| `convert_to_pkr()`, c currencies | O(c) plus the network call | O(c) |

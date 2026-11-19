@@ -8,13 +8,17 @@ Classes
     Budget               monthly limit for each category, stored in a dict
     Ledger               every transaction, stored in a list
 
-Agreed interface (filled in by Parts 2 and 5). n = number of transactions,
+Polymorphism: ExpenseTransaction and IncomeTransaction both have
+signed_amount() and describe(), but each gives its own answer. Code that loops
+over a mixed list just calls t.signed_amount() and gets the right sign.
+
+Budget and Ledger are filled in by Part 5. n = number of transactions,
 k = number of categories.
 """
 
 from abc import ABC, abstractmethod
 
-from data_io import InvalidTransactionError
+from data_io import InvalidTransactionError, parse_amount, parse_date
 
 # The categories the classifier can predict. A tuple, because the list of
 # categories is fixed and should never be changed while the program runs.
@@ -32,14 +36,18 @@ class Transaction(ABC):
     def __init__(self, date, description, amount, category):
         """Store the values. The amount goes through the validated setter.
 
-        Raises InvalidTransactionError for a bad amount. Time: O(1)
+        Raises InvalidTransactionError for a bad date or amount. Time: O(1)
         """
-        raise NotImplementedError("Part 2")
+        self.date = parse_date(date)
+        self.description = str(description).strip()
+        self.category = category
+        # This line calls the amount setter below, so the value is checked.
+        self.amount = amount
 
     @property
     def amount(self):
         """Return the private amount. Time: O(1)"""
-        raise NotImplementedError("Part 2")
+        return self.__amount
 
     @amount.setter
     def amount(self, value):
@@ -47,7 +55,9 @@ class Transaction(ABC):
 
         Raises InvalidTransactionError otherwise. Time: O(1)
         """
-        raise NotImplementedError("Part 2")
+        # Two underscores make the attribute private: code outside the class
+        # cannot write t.__amount, so every change must pass this check.
+        self.__amount = parse_amount(value)
 
     @abstractmethod
     def signed_amount(self):
@@ -55,38 +65,60 @@ class Transaction(ABC):
 
     def describe(self):
         """Return a one-line description for printing. Time: O(1)"""
-        raise NotImplementedError("Part 2")
+        return self.date + "  " + self.category.ljust(13) + "  Rs " + format(self.amount, ",.0f") + "  " + self.description
 
     def to_record(self):
         """Return the transaction as a record tuple for saving.
 
         Output: (date, description, amount, "PKR", category, kind). Time: O(1)
         """
-        raise NotImplementedError("Part 2")
+        return (self.date, self.description, self.amount, "PKR", self.category, self.kind())
+
+    @abstractmethod
+    def kind(self):
+        """Return "expense" or "income"."""
 
 
 class ExpenseTransaction(Transaction):
     """Money spent. signed_amount() is negative. Category must be in CATEGORIES."""
 
+    def __init__(self, date, description, amount, category):
+        """Check the category, then let Transaction store the rest. Time: O(1)"""
+        if category not in CATEGORIES:
+            raise InvalidTransactionError("Unknown category: " + str(category))
+        super().__init__(date, description, amount, category)
+
     def signed_amount(self):
         """Return -amount. Time: O(1)"""
-        raise NotImplementedError("Part 2")
+        return -self.amount
 
     def describe(self):
-        """Return a line such as "2026-11-03  Food  Rs 850  foodpanda biryani". Time: O(1)"""
-        raise NotImplementedError("Part 2")
+        """Add "[spent]" in front of the common description. Time: O(1)"""
+        return "[spent]    " + super().describe()
+
+    def kind(self):
+        """Return "expense"."""
+        return "expense"
 
 
 class IncomeTransaction(Transaction):
     """Money received. signed_amount() is positive. Category is always "Income"."""
 
+    def __init__(self, date, description, amount):
+        """Income always uses the category "Income". Time: O(1)"""
+        super().__init__(date, description, amount, "Income")
+
     def signed_amount(self):
         """Return +amount. Time: O(1)"""
-        raise NotImplementedError("Part 2")
+        return self.amount
 
     def describe(self):
-        """Return a line such as "2026-11-01  Income  Rs 30000  pocket money". Time: O(1)"""
-        raise NotImplementedError("Part 2")
+        """Add "[received]" in front of the common description. Time: O(1)"""
+        return "[received] " + super().describe()
+
+    def kind(self):
+        """Return "income"."""
+        return "income"
 
 
 class Budget:

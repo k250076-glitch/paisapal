@@ -430,3 +430,4 @@ prints where the rate came from. Everything else works offline.
 **Q: What would you improve with more time?**
 A: More real, varied training notes, because the model scores about 51 percent
 on new wording. Also budgets that can change month by month.
+

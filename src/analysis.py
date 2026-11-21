@@ -12,13 +12,16 @@ The monthly spending matrix
     comparing the whole grid with the budget gives a grid of True/False
     showing which months went over budget.
 
-The Pandas functions are filled in by Part 9. n = number of records,
+n = number of records,
 m = number of months, k = number of categories.
 
 Run this file on its own (python src/analysis.py) to see a demo.
 """
 
 import numpy as np
+import pandas as pd
+
+COLUMNS = ["date", "description", "amount", "currency", "category", "kind"]
 
 
 def build_month_matrix(records, categories):
@@ -88,31 +91,55 @@ def matrix_summary(matrix):
 
 def to_dataframe(records):
     """Turn record tuples into a Pandas DataFrame. Time: O(n)"""
-    raise NotImplementedError("Part 9")
+    return pd.DataFrame(records, columns=COLUMNS)
 
 
 def clean_dataframe(df):
     """Remove rows with a missing or non-number amount or date, and fill a missing
     category with "Other". Adds a "month" column. Time: O(n)
     """
-    raise NotImplementedError("Part 9")
+    df = df.copy()
+    # to_numeric and to_datetime turn bad values such as "abc" into NaN or
+    # NaT (Pandas' "missing"), instead of crashing.
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d", errors="coerce")
+    df = df.dropna(subset=["amount", "date"])
+    df = df[df["amount"] > 0]
+    # An empty category ("") counts as missing too.
+    df["category"] = df["category"].replace("", np.nan).fillna("Other")
+    df["month"] = df["date"].dt.strftime("%Y-%m")
+    return df.reset_index(drop=True)
 
 
 def monthly_summary(df):
     """Group expenses by month and category and return total, count and mean
     using groupby and agg. Time: O(n log n)
     """
-    raise NotImplementedError("Part 9")
+    expenses = df[(df["kind"] == "expense") & (df["currency"] == "PKR")]
+    summary = expenses.groupby(["month", "category"])["amount"].agg(["sum", "count", "mean"])
+    summary = summary.rename(columns={"sum": "total", "count": "items", "mean": "average"})
+    return summary.round(0).reset_index()
 
 
 def top_spending_days(records, count=5):
     """Return the days with the most spending, sorted with a lambda. Time: O(n log n)"""
-    raise NotImplementedError("Part 9")
+    totals = {}
+    for date, description, amount, currency, category, kind in records:
+        if kind == "expense" and currency == "PKR":
+            totals[date] = totals.get(date, 0) + amount
+    # items() gives (date, total) pairs; the lambda sorts them by the total.
+    ordered = sorted(totals.items(), key=lambda pair: pair[1], reverse=True)
+    return ordered[:count]
 
 
 def large_expenses(records, threshold):
     """Return the expenses above threshold using filter and a lambda. Time: O(n)"""
-    raise NotImplementedError("Part 9")
+    return list(filter(lambda r: r[5] == "expense" and r[2] > threshold, records))
+
+
+def amounts_in_thousands(records):
+    """Return every amount divided by 1000, using map and a lambda. Time: O(n)"""
+    return list(map(lambda r: round(r[2] / 1000, 1), records))
 
 
 if __name__ == "__main__":
@@ -147,3 +174,27 @@ if __name__ == "__main__":
     for i, month in enumerate(months):
         over = [CATEGORIES[j] for j in range(len(CATEGORIES)) if mask[i, j]]
         print(" ", month, ", ".join(over) if over else "none")
+    print()
+
+    raw_df = pd.read_csv(ledger_path)
+    print("Pandas cleaning: the raw CSV has", len(raw_df), "rows and",
+          int(raw_df.isna().sum().sum()), "missing values")
+    df = clean_dataframe(raw_df)
+    print("After clean_dataframe():", len(df), "rows (bad amounts and dates removed,",
+          "missing category set to Other)")
+    print()
+    print("Pandas: monthly summary for 2026-11 (groupby month and category, then agg)")
+    summary = monthly_summary(df)
+    print(summary[summary["month"] == "2026-11"].to_string(index=False))
+    print()
+
+    print("Top 3 spending days (sorted with a lambda)")
+    for date, total in top_spending_days(records, 3):
+        print(" ", date, "Rs", format(total, ",.0f"))
+    print()
+
+    big = large_expenses(records, 8000)
+    print("Expenses above Rs 8,000 (filter with a lambda):", len(big))
+    for r in big[:3]:
+        print(" ", r[0], r[4], "Rs", format(r[2], ",.0f"), r[1])
+

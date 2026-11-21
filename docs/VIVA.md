@@ -301,3 +301,132 @@ status, bad JSON and no connection, and we checked the source each time.
 **Q: Why is SUPPORTED_CURRENCIES a set?**
 A: Checking if a currency is in a set is O(1) on average. We only need "is it
 there", not an order.
+
+## Zain: confusion matrix and error analysis (Part 11)
+
+**Q: What is a confusion matrix?**
+A: A table with one row per true category and one column per predicted
+category. Each cell counts the notes. The diagonal is the correct answers;
+everything else is a mistake, and the cell tells you which category was
+confused with which.
+
+**Q: What did the error analysis show?**
+A: On the 80 hand-written notes most mistakes were predicted as Food, for
+example 7 Other notes and 4 Bills notes. Food is the biggest and most varied
+category, so for unknown words it is the model's safest guess.
+
+**Q: Why run it on the hand-written notes and not the normal test set?**
+A: The normal test notes come from the same templates as the training notes,
+so there are almost no mistakes to study. The hand-written notes show the
+real weaknesses.
+
+**Q: How would you improve the model?**
+A: More varied training notes, and the corrections users make in the menu.
+They are saved to corrections.csv and added the next time the model trains.
+
+**Q: Why sort the category names before building the matrix?**
+A: So rows and columns are always in the same order and the chart labels
+match the numbers.
+
+## Nehal: spending charts (Part 12)
+
+**Q: Which charts does the app draw?**
+A: A bar chart of total spending per category, a line chart of total spending
+per month and a grouped bar chart of spending next to the budget.
+
+**Q: Where does the chart data come from?**
+A: The NumPy matrix. `matrix.sum(axis=0)` gives the category totals and
+`matrix.sum(axis=1)` gives the monthly totals.
+
+**Q: How are the two bars in a group placed side by side?**
+A: `np.arange` gives the group positions 0, 1, 2 and so on. The spent bar is
+drawn half a bar width to the left and the budget bar half a width to the right.
+
+**Q: Why call `plt.close()` after saving?**
+A: Every open figure uses memory. Closing it frees the memory, so drawing many
+charts does not slow the program down.
+
+**Q: Why does the line chart start at 0?**
+A: If the axis started at the smallest value, a small change would look huge.
+Starting at 0 shows the real size of the change.
+
+**Q: What is the "Agg" back end?**
+A: It draws charts straight into image files without opening a window, so the
+menu never stops and waits for a window to be closed.
+
+## Polani: the menu (Part 13)
+
+**Q: How does the menu work?**
+A: A `while True` loop prints the options, reads a choice and calls one
+function for it. Choice 9 saves and uses `break` to leave the loop.
+
+**Q: What happens if the user types "abc" as an amount?**
+A: `ask_amount()` catches the `InvalidTransactionError` from `parse_amount()`,
+prints the reason and asks again. The program never crashes on bad input.
+
+**Q: How does the user correct a wrong category?**
+A: After the prediction the menu lists the categories. Enter keeps the guess;
+a number picks another. A correction is saved to corrections.csv and used the
+next time the model trains.
+
+**Q: When is the data saved?**
+A: After every change, to data/processed/ledger.csv and budget.json, so
+nothing is lost if the window is closed.
+
+**Q: Why are the foreign rows converted with one call to `get_rates()`?**
+A: Each call may wait for the website. Asking once and using the same rates for
+every row means at most one wait.
+
+**Q: Which modules does main.py use?**
+A: All of them: models for the classes, classifier for predictions, api_client
+for currency, analysis for the matrix and Pandas, plots for charts and
+data_io for files.
+
+## Everyone: testing (Part 14)
+
+**Q: How do you run the tests?**
+A: From the project folder, `python -m unittest discover tests`, or open a
+test file in VS Code and press Run. All 71 tests pass.
+
+**Q: Why unittest and not pytest?**
+A: unittest comes with Python, so nothing extra needs to be installed.
+
+**Q: Which edge cases did you test?**
+A: Empty input, one element, duplicates, large input, invalid input, a missing
+file and no network. Each test file has examples of each.
+
+**Q: How did you test the currency code without the internet?**
+A: With `unittest.mock.patch`, which replaces `requests.get` with a fake
+during the test. The fake returns a good reply, an error or raises a
+connection error, and we check where the rates came from.
+
+**Q: Why does each file test use a temporary folder?**
+A: So the tests never change our real data files, and every test starts from
+an empty folder. The folder is deleted afterwards in `tearDown()`.
+
+**Q: What does `setUp()` do?**
+A: It runs before every test in the class, to prepare the same starting point
+each time.
+
+## How to demo in the viva (everyone)
+
+1. Open the project folder in VS Code.
+2. Open `src/main.py` and press Run. Use the menu in this order: 5 (Food
+   budget 12000), 1 (`foodpanda biryani`, 850, Enter, Enter), 1 again
+   (`shoe polish wala`, 200, pick Other), 2 (`amazon book`, USD, 20), 6, 7,
+   8, 9.
+3. When asked about your own module, open your file and press Run to show its
+   demo, then open its test file and press Run to show the tests pass.
+4. If the instructor asks to see a chart, open `outputs/figures`.
+
+If something goes wrong in the demo, stay calm and explain what the code
+should do. Deleting the files in `data/processed` resets the app to the sample
+data.
+
+**Q: Can you show the app working without the internet?**
+A: Yes. The currency option then uses the saved rates or the built-in ones and
+prints where the rate came from. Everything else works offline.
+
+**Q: What would you improve with more time?**
+A: More real, varied training notes, because the model scores about 51 percent
+on new wording. Also budgets that can change month by month.

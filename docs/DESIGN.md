@@ -3,7 +3,7 @@
 This document grows with the project. Each part adds the section for the
 code it builds, so it always matches what is in the repository.
 
-Status: up to date with Parts 1 to 10.
+Status: final version (Parts 1 to 15), 21 Nov 2026.
 
 ## 1. What the program does
 
@@ -24,7 +24,8 @@ the monthly budget, can convert foreign currency to PKR, and draws charts.
    is created (Part 2) and added to the `Ledger` (Part 5).
 5. Summaries use the NumPy matrix and Pandas (Parts 7 and 9). Charts are saved
    to `outputs/figures` (Parts 11 and 12).
-6. On exit, the ledger and budgets are saved to `data/processed` (Part 4).
+6. After every change, the ledger and budgets are saved to `data/processed`
+   (Parts 4 and 13), so nothing is lost if the window is closed.
 
 ## 3. Project layout and who owns what
 
@@ -296,6 +297,71 @@ to cache to fallback as expected. This is the part we planned to drop first
 if we fell behind; the rest of the app works without it because foreign rows
 are skipped.
 
+### 6.10 Confusion matrix and error analysis (Part 11, classifier.py and plots.py)
+
+`error_analysis(classifier, texts, labels, path)` predicts every note, writes
+each wrong one (note, true category, predicted category) to
+outputs/results/wrong_predictions.csv, and returns the **confusion matrix**:
+a c x c table where row i is the true category and column j the predicted
+one. Numbers on the diagonal are correct answers; every other number is a
+mistake. `most_confused_pairs()` lists the biggest off-diagonal cells, sorted
+with a lambda.
+
+`plot_confusion_matrix()` draws the table as a Seaborn heatmap with the
+count written in each cell.
+
+What it shows (on the 80 hand-written notes): most mistakes go into Food.
+For example "Other -> Food" 7 times and "Bills -> Food" 4 times. Food is the
+biggest category in the training data and has the most varied words, so when
+the model sees words it does not know, Food is its safest guess. Fixes we
+could try: more varied training notes, and the user corrections saved by the
+menu, which are added to the next training.
+
+### 6.11 Spending charts (Part 12, plots.py)
+
+Three charts, each with a title, axis labels and units (Rs), saved as PNG in
+outputs/figures:
+
+- `plot_category_bar()`: total per category, bars sorted biggest first with
+  a lambda.
+- `plot_monthly_trend()`: total per month as a line. The y axis starts at 0
+  so a small change does not look bigger than it is.
+- `plot_budget_vs_actual()`: for each category, the month's spending next to
+  its limit. `np.arange` gives the group positions and each bar is moved half
+  a bar width left or right.
+
+The data comes from the NumPy matrix: `matrix.sum(axis=0)` for the category
+bar and `matrix.sum(axis=1)` for the trend. Matplotlib uses the "Agg" back end,
+which draws straight to a file without opening a window, and every figure is
+closed after saving so memory does not fill up.
+
+### 6.12 The menu (Part 13, main.py)
+
+`main()` loads the ledger and budget, trains Naive Bayes, then loops:
+show the menu, read a choice, call one function for that choice.
+
+| Option | What it does | Modules used |
+|---|---|---|
+| 1 | Add an expense; the category is predicted and the user can accept it or pick another (saved as a correction) | text_utils, classifier, models |
+| 2 | Same, for a foreign currency converted to PKR | api_client |
+| 3 | Add income | models |
+| 4 | Import a CSV file; bad rows are skipped and counted | data_io |
+| 5 | Set a monthly limit for a category | models (Budget) |
+| 6 | Monthly totals, budget check, Pandas items and average, balance, biggest expenses | models, analysis |
+| 7 | Draw the three charts (opens the folder on Windows) | analysis, plots |
+| 8 | Train and compare both models, then use the better one | classifier |
+| 9 | Save and exit | data_io |
+
+Input checking: small helper functions (`ask_amount`, `ask_date`,
+`ask_category`, `ask_month`) keep asking until the answer is valid, so a typing
+mistake never crashes the program. Any `InvalidTransactionError` that still
+reaches the loop is printed and the menu continues.
+
+Saving: the ledger goes to data/processed/ledger.csv and the budget to
+data/processed/budget.json after every change. The first time, the ledger
+starts from the sample file, with its foreign rows converted to PKR using one
+call to `get_rates()` for all of them.
+
 ## 7. Time and space complexity of the main operations
 
 Filled in as each part is built.
@@ -329,3 +395,93 @@ Filled in as each part is built.
 | `top_spending_days()` | O(n + d log d), d days | O(d) |
 | `large_expenses()`, `amounts_in_thousands()` | O(n) | O(n) |
 | `convert_to_pkr()`, c currencies | O(c) plus the network call | O(c) |
+| `error_analysis()` | O(n * v * c) | O(n + c * c) |
+| `most_confused_pairs()` | O(c * c log c) | O(c * c) |
+| `plot_category_bar()` | O(k log k) | O(k) |
+| `plot_monthly_trend()` | O(m) | O(m) |
+| `plot_budget_vs_actual()` | O(k) | O(k) |
+| `plot_confusion_matrix()` | O(c * c) | O(c * c) |
+| One menu action that saves the ledger | O(n) | O(n) |
+
+## 8. Testing (Part 14)
+
+We used Python's built-in `unittest`, so nothing extra has to be installed.
+Run every test from the project folder:
+
+```
+python -m unittest discover tests
+```
+
+or open one test file in VS Code and press Run. There are 71 tests and all pass.
+
+| File | Owner | What it checks |
+|---|---|---|
+| tests/test_core.py | Polani | Transaction validation, abstract class, polymorphism, Ledger and Budget |
+| tests/test_text_ml.py | Zain | Text cleaning, split, both classifiers, corrections, error analysis |
+| tests/test_data.py | Nehal | Parsing, CSV and JSON files, currency API, NumPy, Pandas, charts |
+
+Edge cases covered in each file:
+
+- Empty input: empty ledger, empty note, empty CSV, empty matrix, empty chart.
+- One element: one transaction, one word, one CSV row, one record.
+- Duplicates: the same expense twice is kept and added up; the same budget
+  set twice keeps the last value; the same correction saved twice.
+- Large input: 10,000 transactions, a 10,000-word note, a 5,000-row CSV,
+  36,000 records in the matrix.
+- Invalid input: negative, zero, "abc", "nan" and empty amounts; dates such as
+  2026-02-30; unknown categories and currencies; lists of different lengths.
+- Missing file: reading a CSV or JSON file that does not exist.
+- No network: the website is replaced by a fake (`unittest.mock`) that fails,
+  times out or sends bad data, and we check the cache and fallback are used.
+  This also means the tests never need the internet.
+
+The classifier tests train on a small 40-note dataset made in the test file,
+so they finish in about a second.
+
+## 9. How to demo the project
+
+Everything can be shown from VS Code with the Run button, with no typed
+commands.
+
+1. Open `src/main.py` and press Run. The menu appears in the terminal.
+2. A good order to show every feature in about five minutes:
+   - 5: set the Food budget to 12000.
+   - 1: type `foodpanda biryani`, amount 850, press Enter to accept the
+     predicted category, Enter for today's date. A budget alert may appear.
+   - 1 again: type `shoe polish wala`, amount 200, and pick another category
+     to show a correction being saved.
+   - 2: type `amazon book`, currency USD, amount 20, to show the conversion.
+   - 6: press Enter for the latest month to see totals, the budget check and
+     the Pandas table.
+   - 7: draw the charts. On Windows the charts folder opens.
+   - 8: train and compare the two models.
+   - 9: save and exit.
+3. Each member can also show their own module on its own: open the file and
+   press Run (`models.py`, `text_utils.py`, `classifier.py`, `data_io.py`,
+   `analysis.py`, `api_client.py`, `plots.py`).
+4. Tests: open a file in the `tests` folder and press Run. It ends with OK.
+
+To start again from the sample data, delete the files in `data/processed`.
+
+## 10. Limits and what we would do next
+
+- The training notes come from templates, so the model scores about 99.7
+  percent on them but about 51 percent on 80 hand-written notes with new
+  wording. More real, varied notes would help most. The menu already saves
+  user corrections and adds them to the next training.
+- The currency rates need the internet. Without it the app uses the last
+  saved rates, or rough built-in ones, and says so.
+- One user and one ledger file. There is no login, as the instructor's rules
+  ask for a console app with no database.
+- The budget is monthly only, the same limit every month.
+
+## 11. Who did what
+
+| Member | Parts | Files | Data structures and algorithms |
+|---|---|---|---|
+| Mustafa Muhammad Polani (25K-0076) | 1, 2, 5, 13, 14, 15 | models.py, main.py, tests/test_core.py, README.md | Abstract base class, inheritance, polymorphism, private attribute with a setter, list (Ledger), dict (Budget), menu loop with input checking |
+| Zain Noman Dar (25K-0146) | 3, 6, 8, 11, 14 | text_utils.py, classifier.py, plots.py (confusion matrix), tests/test_text_ml.py | Set (stop-words), dict (normalisation), regex, TF-IDF, stratified split, Naive Bayes, Logistic Regression, macro F1, confusion matrix |
+| Nehal Ali Khan (25K-0133) | 4, 7, 9, 10, 12, 14 | data_io.py, analysis.py, api_client.py, plots.py (three charts), tests/test_data.py | Tuple records, custom exception, CSV and JSON files, 2-D NumPy array with broadcasting, Pandas groupby, lambda with sorted, map and filter, dict cache, set of currencies, Matplotlib charts |
+
+Each member committed their own parts from their own GitHub account. The git
+history shows who wrote what.

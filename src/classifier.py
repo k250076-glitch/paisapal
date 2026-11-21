@@ -10,7 +10,8 @@ How it works
     3. Both are tested on the same unseen 20%, and the better one is used
        in the app.
 
-Part 11 fills in the error analysis. Run this file on its own to see a demo.
+Part 11 adds the confusion matrix and the error analysis. Run this file on its
+own to see a demo.
 n = number of notes,
 v = number of different words (the vocabulary size), c = number of categories.
 """
@@ -20,11 +21,13 @@ import os
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score, precision_score,
+                             recall_score)
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
 
 from data_io import load_labelled_dataset
+from plots import plot_confusion_matrix
 from text_utils import clean_many, clean_text
 
 # The seed makes the random split the same every time, so results can be repeated.
@@ -197,9 +200,44 @@ def error_analysis(classifier, texts, labels, path):
     """Write every wrong prediction (note, true category, predicted category) to a file
     and return the confusion matrix.
 
+    The confusion matrix is a c x c table. Row i is the true category and
+    column j the predicted one, so the numbers on the diagonal are correct
+    answers and every other number is a mistake.
+
+    Input:  classifier (trained ExpenseClassifier), texts and labels (lists of str),
+            path (str) of the CSV file for the wrong predictions
     Output: (matrix, category_names). Time: O(n * v * c)
     """
-    raise NotImplementedError("Part 11")
+    predicted = classifier.predict_many(texts)
+    # sorted(set(...)) gives each category once, in a fixed order, so the rows
+    # and columns of the matrix always mean the same thing.
+    category_names = sorted(set(labels) | set(predicted))
+    matrix = confusion_matrix(labels, predicted, labels=category_names)
+
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(["description", "true_category", "predicted_category"])
+        for text, true_label, guess in zip(texts, labels, predicted):
+            if true_label != guess:
+                writer.writerow([text, true_label, guess])
+    return matrix, category_names
+
+
+def most_confused_pairs(matrix, category_names, count=3):
+    """Return the most common mistakes as (true, predicted, times), biggest first.
+
+    Only cells off the diagonal are mistakes. Time: O(c * c log c)
+    """
+    mistakes = []
+    for i in range(len(category_names)):
+        for j in range(len(category_names)):
+            if i != j and matrix[i][j] > 0:
+                mistakes.append((category_names[i], category_names[j], int(matrix[i][j])))
+    mistakes.sort(key=lambda item: item[2], reverse=True)
+    return mistakes[:count]
 
 
 if __name__ == "__main__":
@@ -244,3 +282,17 @@ if __name__ == "__main__":
     for note in ["Rs 850 foodpanda biryani", "careem to uni", "K Electric bill",
                  "panadol from dvago", "cinepax tickets", "semester fee"]:
         print(" ", note.ljust(28), "->", best.predict(note))
+    print()
+
+    # Part 11: where does the model go wrong? We use the hard notes, because
+    # on the template test notes there are almost no mistakes to look at.
+    wrong_path = os.path.join(project_folder, "outputs", "results", "wrong_predictions.csv")
+    figure_path = os.path.join(project_folder, "outputs", "figures", "confusion_matrix.png")
+    matrix, names = error_analysis(best, hard_texts, hard_labels, wrong_path)
+    plot_confusion_matrix(matrix, names, figure_path)
+    print("Error analysis on the hand-written notes")
+    print("  wrong predictions saved to", os.path.relpath(wrong_path, project_folder))
+    print("  confusion matrix chart saved to", os.path.relpath(figure_path, project_folder))
+    print("  most common mistakes (true -> predicted, times):")
+    for true_label, guess, times in most_confused_pairs(matrix, names):
+        print("   ", true_label, "->", guess + ",", times)

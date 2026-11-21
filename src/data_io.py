@@ -11,6 +11,8 @@ Records
     A tuple is used because a saved record should not be changed by mistake.
 
 n = number of rows in the file.
+
+Run this file on its own (python src/data_io.py) to see a demo.
 """
 
 import csv
@@ -181,3 +183,40 @@ def _make_folder_for(path):
     folder = os.path.dirname(path)
     if folder:
         os.makedirs(folder, exist_ok=True)
+
+
+if __name__ == "__main__":
+    # Demo: run this file on its own to see reading, validation and JSON.
+    project_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ledger_path = os.path.join(project_folder, "data", "raw", "ledger_sample.csv")
+    dataset_path = os.path.join(project_folder, "data", "raw", "expenses_labelled.csv")
+
+    print("Demo of data_io.py")
+    print()
+    records, skipped = read_ledger_csv(ledger_path)
+    print("Ledger:", len(records), "good records,", skipped, "bad rows skipped")
+    print("First record (a tuple):", records[0])
+    print()
+
+    texts, labels = load_labelled_dataset(dataset_path)
+    print("Labelled dataset:", len(texts), "notes")
+    print()
+
+    print("Checking amounts with parse_amount()")
+    for text in ["1,200.50", "abc", "-50", ""]:
+        try:
+            print(" ", repr(text).ljust(12), "->", parse_amount(text))
+        except InvalidTransactionError as error:
+            print(" ", repr(text).ljust(12), "-> InvalidTransactionError:", error)
+    print()
+
+    print("Checking dates with parse_date()")
+    for text in ["2026-11-03", "2026-02-30", "03/11/2026"]:
+        try:
+            print(" ", repr(text).ljust(14), "->", parse_date(text))
+        except InvalidTransactionError as error:
+            print(" ", repr(text).ljust(14), "-> InvalidTransactionError:", error)
+    print()
+
+    missing = read_json(os.path.join(project_folder, "data", "processed", "no_such_file.json"), {})
+    print("Reading a JSON file that does not exist returns the default:", missing)
